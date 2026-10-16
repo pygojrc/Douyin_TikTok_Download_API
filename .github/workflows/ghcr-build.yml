@@ -96,8 +96,7 @@ jobs:
         if: matrix.name == 'app'
         run: |
           docker buildx build --load --platform linux/amd64 \
-            -f "${{ matrix.dockerfile }}" -t dtk:smoke \
-            --build-arg "${{ matrix.build_args }}" .
+            -f "${{ matrix.dockerfile }}" -t dtk:smoke .
           docker run --rm --entrypoint sh dtk:smoke -c '
             set -e
             dtk --version
