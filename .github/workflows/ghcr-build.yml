@@ -1,0 +1,116 @@
+# Build and publish this fork's images to GitHub Container Registry.
+# Kept separate from docker-publish.yml so the Docker Hub pipeline is untouched.
+name: Build and publish GHCR images
+
+on:
+  push:
+    branches:
+      - build/ghcr-container
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push images to GHCR (disable to build and smoke-test only)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ghcr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build ${{ matrix.name }} image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: app
+            image: ghcr.io/pygojrc/douyin_tiktok_download_api
+            dockerfile: docker/Dockerfile
+            build_args: ""
+          - name: downloader
+            image: ghcr.io/pygojrc/douyin_tiktok_download_api-downloader
+            dockerfile: docker/Dockerfile.downloader
+            build_args: VERSION=${{ github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'workflow_dispatch' || inputs.publish
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ matrix.image }}
+          flavor: latest=false
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/pygojrc/Douyin_TikTok_Download_API
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build and publish multi-platform image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.build_args }}
+          cache-from: type=gha,scope=ghcr-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=ghcr-${{ matrix.name }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Smoke test app image
+        if: matrix.name == 'app'
+        run: |
+          docker buildx build --load --platform linux/amd64 \
+            -f "${{ matrix.dockerfile }}" -t dtk:smoke \
+            --build-arg "${{ matrix.build_args }}" .
+          docker run --rm --entrypoint sh dtk:smoke -c '
+            set -e
+            dtk --version
+            test -s "${DTK_CONSOLE_DIR}/index.html"
+            echo "console assets present"
+          '
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ matrix.image }}"
+            echo
+            echo "Published: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}"
+            echo "Tags:"
+            echo '${{ steps.meta.outputs.tags }}'
+          } >> "$GITHUB_STEP_SUMMARY"
