@@ -569,3 +569,48 @@ procedure follows `docs/design/16-salvage-and-debug.md`.
 | browser-rpc unhealthy, log says `not installed in this image` | built without `CLOAKBROWSER_COMMIT` |
 | minting always times out | the proxy cannot reach the platform; test the proxy on its own before blaming the browser |
 | renderers crash under load | `shm_size` was lowered; Chromium needs more than the 64MB default |
+
+
+## GHCR images (fork build branch)
+
+The fork also has a separate GitHub Actions workflow at
+`.github/workflows/ghcr-build.yml`. It builds the application and downloader
+for `linux/amd64` and `linux/arm64`, and publishes them to GitHub Container
+Registry using the repository's `GITHUB_TOKEN`. The existing Docker Hub
+workflow is left unchanged.
+
+After the first successful run, the build-branch test images use these names:
+
+- `ghcr.io/pygojrc/douyin_tiktok_download_api:build-ghcr-container`
+- `ghcr.io/pygojrc/douyin_tiktok_download_api-downloader:build-ghcr-container`
+
+To try the published app image with the existing Compose stack, set the image
+and tag explicitly. The browser RPC image is still built locally when its
+profile is enabled:
+
+```bash
+DTK_IMAGE=ghcr.io/pygojrc/douyin_tiktok_download_api \
+DTK_IMAGE_TAG=build-ghcr-container \
+docker compose -p dtk -f docker/compose.yml pull api worker migrate
+
+DTK_IMAGE=ghcr.io/pygojrc/douyin_tiktok_download_api \
+DTK_IMAGE_TAG=build-ghcr-container \
+docker compose -p dtk -f docker/compose.yml up -d
+```
+
+The downloader sidecar is optional and has its own image variable:
+
+```bash
+DTK_DOWNLOADER_IMAGE=ghcr.io/pygojrc/douyin_tiktok_download_api-downloader \
+DTK_IMAGE_TAG=build-ghcr-container \
+docker compose -p dtk -f docker/compose.yml --profile downloader pull downloader
+
+DTK_DOWNLOADER_IMAGE=ghcr.io/pygojrc/douyin_tiktok_download_api-downloader \
+DTK_IMAGE_TAG=build-ghcr-container \
+docker compose -p dtk -f docker/compose.yml --profile downloader up -d
+```
+
+The branch tag is for validation, not a stable release. Version tags (`vX.Y.Z`)
+also publish versioned images and move `latest`. If GHCR marks a package
+private after its first publish, change the package visibility to public in
+GitHub's package settings before testing anonymous pulls.
